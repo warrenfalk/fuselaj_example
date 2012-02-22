@@ -2,6 +2,7 @@ package warrenfalk.fuselaj.example;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Hashtable;
 
 import warrenfalk.fuselaj.DirBuffer;
@@ -37,6 +38,7 @@ public class ExampleFs extends Filesystem {
 		Object data;
 		
 		public Inode() {
+			mtime = ctime = atime = getUnixTime(Calendar.getInstance().getTimeInMillis());
 			synchronized (ExampleFs.this) {
 				inode = nextInode++;
 				inodes.put(inode, this);
@@ -45,7 +47,7 @@ public class ExampleFs extends Filesystem {
 		
 		long size() {
 			if (data instanceof Directory)
-				return ((Directory)data).entries.size();
+				return ((Directory)data).entries.size(); // note: other filesystems give the sum of the sizes of the entries
 			if (data instanceof String)
 				return ((String)data).length();
 			else
@@ -53,6 +55,10 @@ public class ExampleFs extends Filesystem {
 		}
 	}
 	
+	private static long getUnixTime(long timeInMillis) {
+		return timeInMillis / 1000;
+	}
+
 	static class DirEntry {
 		String name;
 		long inode;
@@ -127,34 +133,19 @@ public class ExampleFs extends Filesystem {
 	
 	@Override
 	protected void getattr(String path, Stat stat) throws FilesystemException {
-		// TODO: remove test code
-		if (path.contains("/special")) {
-			stat.putLinkCount(2);
-			stat.putMode(Mode.IFDIR | 0755);
-			stat.putInode(0);
-			return;
-		}
 		DirEntry entry = getDirEntry(path);
 		stat.putMode(entry.mode);
 		stat.putInode(entry.inode);
 		Inode inode = inodes.get(entry.inode);
 		stat.putLinkCount(inode.links);
 		stat.putSize(inode.size());
+		stat.putCTime(inode.ctime);
+		stat.putModTime(inode.mtime);
+		stat.putAccessTime(inode.atime);
 	}
 	
 	@Override
 	protected void readdir(String path, DirBuffer dirBuffer, FileInfo fileInfo) throws FilesystemException {
-		// TODO: remove test code
-		if (path.endsWith("/special")) {
-			long i = dirBuffer.getPosition() + 1;
-			while (i < 500) {
-				System.out.println(i);
-				if (dirBuffer.putDir("dir" + i, i))
-					return;
-				i++;
-			}
-			return;
-		}
 		DirEntry entry = getDirEntry(path);
 		Inode inode = inodes.get(entry.inode);
 		if (!(inode.data instanceof Directory))
