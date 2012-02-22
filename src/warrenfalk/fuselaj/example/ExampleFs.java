@@ -9,6 +9,7 @@ import warrenfalk.fuselaj.DirBuffer;
 import warrenfalk.fuselaj.FileInfo;
 import warrenfalk.fuselaj.Filesystem;
 import warrenfalk.fuselaj.FilesystemException;
+import warrenfalk.fuselaj.FuseContext;
 import warrenfalk.fuselaj.Mode;
 import warrenfalk.fuselaj.Stat;
 import warrenfalk.fuselaj.Errno;
@@ -223,5 +224,20 @@ public class ExampleFs extends Filesystem {
 		if (dir.entries.size() > 0)
 			throw new FilesystemException(Errno.DirectoryNotEmpty);
 		parentDir.remove(name);
+	}
+	
+	@Override
+	protected void access(String path, int mask) throws FilesystemException {
+		// for now we just give access to everything
+		/* I think the way this should work is that we use this function to check access from all other functions.
+		 * Doing it this way allows other applications to check access, then, using the access() system call and always
+		 * get accurate results
+		 */
+	}
+	
+	@Override
+	protected void chmod(String path, int mode) throws FilesystemException {
+		DirEntry entry = getDirEntry(path);
+		entry.mode = mode;
 	}
 }
