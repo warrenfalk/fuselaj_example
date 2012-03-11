@@ -82,10 +82,6 @@ public class ExampleFs extends Filesystem {
 		}
 	}
 	
-	private static long getUnixTime(long timeInMillis) {
-		return timeInMillis / 1000;
-	}
-	
 	static class SymLink {
 		final public String target;
 		
