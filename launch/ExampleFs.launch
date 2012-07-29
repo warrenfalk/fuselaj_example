@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<launchConfiguration type="org.eclipse.jdt.launching.localJavaApplication">
+<stringAttribute key="bad_container_name" value="/fuselaj_example/lu"/>
+<listAttribute key="org.eclipse.debug.core.MAPPED_RESOURCE_PATHS">
+<listEntry value="/fuselaj_example/src/warrenfalk/fuselaj/example/ExampleFs.java"/>
+</listAttribute>
+<listAttribute key="org.eclipse.debug.core.MAPPED_RESOURCE_TYPES">
+<listEntry value="1"/>
+</listAttribute>
+<stringAttribute key="org.eclipse.jdt.launching.MAIN_TYPE" value="warrenfalk.fuselaj.example.ExampleFs"/>
+<stringAttribute key="org.eclipse.jdt.launching.PROGRAM_ARGUMENTS" value="-d /dev/shm/test -o allow_other,use_ino,big_writes"/>
+<stringAttribute key="org.eclipse.jdt.launching.PROJECT_ATTR" value="fuselaj_example"/>
+</launchConfiguration>
