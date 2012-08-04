@@ -1,6 +1,7 @@
 package warrenfalk.fuselaj.example;
 
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.HashMap;
@@ -9,7 +10,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import warrenfalk.fuselaj.DirBuffer;
 import warrenfalk.fuselaj.FileInfo;
-import warrenfalk.fuselaj.Filesystem;
+import warrenfalk.fuselaj.FuselajFs;
 import warrenfalk.fuselaj.FilesystemException;
 import warrenfalk.fuselaj.FuseContext;
 import warrenfalk.fuselaj.Mode;
@@ -17,19 +18,21 @@ import warrenfalk.fuselaj.Stat;
 import warrenfalk.fuselaj.Errno;
 import warrenfalk.fuselaj.StatVfs;
 
-public class ExampleFs extends Filesystem {
+public class ExampleFs extends FuselajFs {
 	DirEntry root;
 	Hashtable<Long, Inode> inodes = new Hashtable<Long, Inode>();
 	long nextInode = 1;
+	
+	Path rootPath = nfs.getPath(".").normalize();
 	
 	public ExampleFs() {
 		super(false);
 		Directory rootdir = new Directory();
 		Inode rootinode = new Inode(rootdir, 0755);
-		root = new DirEntry("/", rootinode);
+		root = new DirEntry(rootPath, rootinode);
 		
 		Inode hw = new Inode("Hello World!", 0444);
-		rootdir.entries.add(new DirEntry("hello", hw));
+		rootdir.entries.add(new DirEntry(nfs.getPath("hello"), hw));
 	}
 	
 	class Inode {
@@ -77,24 +80,24 @@ public class ExampleFs extends Filesystem {
 			if (data instanceof FileData)
 				return ((FileData)data).size();
 			if (data instanceof SymLink)
-				return ((SymLink)data).target.length();
+				return ((SymLink)data).target.toString().length();
 			return 0;
 		}
 	}
 	
 	static class SymLink {
-		final public String target;
+		final public Path target;
 		
-		public SymLink(String target) {
+		public SymLink(Path target) {
 			this.target = target;
 		}
 	}
 
 	static class DirEntry {
-		String name;
+		Path name;
 		long inode;
 		
-		public DirEntry(String name, Inode inode) {
+		public DirEntry(Path name, Inode inode) {
 			this.name = name;
 			inode.links++;
 			this.inode = inode.inode;
@@ -110,14 +113,14 @@ public class ExampleFs extends Filesystem {
 			mode = 0755;
 		}
 		
-		DirEntry find(String name) {
+		DirEntry find(Path name) {
 			for (DirEntry entry : entries)
 				if (entry.name.equals(name))
 					return entry;
 			return null;
 		}
 
-		public DirEntry remove(String name) throws FilesystemException {
+		public DirEntry remove(Path name) throws FilesystemException {
 			for (int i = 0; i < entries.size(); i++)
 				if (entries.get(i).name.equals(name))
 					return entries.remove(i);
@@ -244,28 +247,26 @@ public class ExampleFs extends Filesystem {
 		System.exit(exitCode);
 	}
 	
-	DirEntry getDirEntry(String path) throws FilesystemException {
+	DirEntry getDirEntry(Path path) throws FilesystemException {
 		DirEntry entry = root;
-		int slash = 0;
-		while ((slash + 1) < path.length()) {
-			path = path.substring(slash + 1);
+		while (!rootPath.equals(path) && path != null) {
 			Inode inode = inodes.get(entry.inode);
 			if (!(inode.data instanceof Directory))
 				throw new FilesystemException(Errno.NoSuchFileOrDirectory);
 			Directory dir = (Directory)inode.data;
-			slash = path.indexOf('/');
-			if (slash == -1)
-				slash = path.length();
-			String name = path.substring(0, slash);
+			Path name = path.getName(0);
 			entry = dir.find(name);
 			if (entry == null)
 				throw new FilesystemException(Errno.NoSuchFileOrDirectory);
+			if (path.getNameCount() == 1)
+				break;
+			path = path.subpath(1, path.getNameCount());
 		}
 		return entry;
 	}
 	
 	@Override
-	protected void getattr(String path, Stat stat) throws FilesystemException {
+	protected void getattr(Path path, Stat stat) throws FilesystemException {
 		DirEntry entry = getDirEntry(path);
 		stat.putInode(entry.inode);
 		Inode inode = inodes.get(entry.inode);
@@ -280,7 +281,7 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void opendir(String path, FileInfo fileInfo) throws FilesystemException {
+	protected void opendir(Path path, FileInfo fileInfo) throws FilesystemException {
 		DirEntry entry = getDirEntry(path);
 		Inode inode = inodes.get(entry.inode);
 		if (!(inode.data instanceof Directory))
@@ -289,7 +290,7 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void readdir(String path, DirBuffer dirBuffer, FileInfo fileInfo) throws FilesystemException {
+	protected void readdir(Path path, DirBuffer dirBuffer, FileInfo fileInfo) throws FilesystemException {
 		FileHandle fh = FileHandle.get(fileInfo.getFileHandle());
 		Inode inode = fh.inode;
 		Directory dir = (Directory)inode.data;
@@ -298,17 +299,17 @@ public class ExampleFs extends Filesystem {
 		dirBuffer.putDir("..", 0);
 		for (DirEntry child : dir.entries) {
 			Inode childnode = inodes.get(child.inode);
-			dirBuffer.putDir(child.name, child.inode, childnode.mode, 0);
+			dirBuffer.putDir(child.name.toString(), child.inode, childnode.mode, 0);
 		}
 	}
 	
 	@Override
-	protected void releasedir(String path, FileInfo fi) throws FilesystemException {
+	protected void releasedir(Path path, FileInfo fi) throws FilesystemException {
 		FileHandle.release(fi);
 	}
 	
 	@Override
-	protected void read(String path, FileInfo fileInfo, ByteBuffer buffer, long position) throws FilesystemException {
+	protected void read(Path path, FileInfo fileInfo, ByteBuffer buffer, long position) throws FilesystemException {
 		FileHandle fh = FileHandle.get(fileInfo.getFileHandle());
 		Inode inode = fh.inode;
 		if (inode.data instanceof FileData) {
@@ -330,12 +331,9 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void mkdir(String path, int mode) throws FilesystemException {
+	protected void mkdir(Path path, int mode) throws FilesystemException {
 		// first break path into parent and name
-		int slash = path.lastIndexOf('/');
-		String parent = path.substring(0, slash);
-		if (parent.length() == 0)
-			parent = "/";
+		Path parent = parentOf(path);
 		// get the parent node
 		DirEntry parentEntry = getDirEntry(parent);
 		Inode parentNode = inodes.get(parentEntry.inode);
@@ -343,7 +341,7 @@ public class ExampleFs extends Filesystem {
 			throw new FilesystemException(Errno.NotADirectory);
 		Directory parentDir = (Directory)parentNode.data;
 		// see if new dir already exists
-		String name = path.substring(slash + 1);
+		Path name = path.getFileName();
 		DirEntry entry = parentDir.find(name);
 		if (entry != null)
 			throw new FilesystemException(Errno.FileExists);
@@ -354,12 +352,9 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void rmdir(String path) throws FilesystemException {
+	protected void rmdir(Path path) throws FilesystemException {
 		// first break path into parent and name
-		int slash = path.lastIndexOf('/');
-		String parent = path.substring(0, slash);
-		if (parent.length() == 0)
-			parent = "/";
+		Path parent = parentOf(path);
 		// get the parent node
 		DirEntry parentEntry = getDirEntry(parent);
 		Inode parentNode = inodes.get(parentEntry.inode);
@@ -367,7 +362,7 @@ public class ExampleFs extends Filesystem {
 			throw new FilesystemException(Errno.NotADirectory);
 		Directory parentDir = (Directory)parentNode.data;
 		// see if new dir exists
-		String name = path.substring(slash + 1);
+		Path name = path.getFileName();
 		DirEntry entry = parentDir.find(name);
 		Inode inode = inodes.get(entry.inode);
 		Directory dir = (Directory)inode.data;
@@ -377,7 +372,7 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void access(String path, int mask) throws FilesystemException {
+	protected void access(Path path, int mask) throws FilesystemException {
 		// for now we just give access to everything
 		/* I think the way this should work is that we use this function to check access from all other functions.
 		 * Doing it this way allows other applications to check access, then, using the access() system call and always
@@ -386,14 +381,14 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void chmod(String path, int mode) throws FilesystemException {
+	protected void chmod(Path path, int mode) throws FilesystemException {
 		DirEntry entry = getDirEntry(path);
 		Inode inode = inodes.get(entry.inode);
 		inode.mode = mode;
 	}
 	
 	@Override
-	protected void chown(String path, int uid, int gid) throws FilesystemException {
+	protected void chown(Path path, int uid, int gid) throws FilesystemException {
 		DirEntry entry = getDirEntry(path);
 		Inode inode = inodes.get(entry.inode);
 		if (uid != -1)
@@ -403,30 +398,30 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void fgetattr(String path, Stat stat, FileInfo fi) throws FilesystemException {
+	protected void fgetattr(Path path, Stat stat, FileInfo fi) throws FilesystemException {
 		super.fgetattr(path, stat, fi);
 	}
 	
 	@Override
-	protected void open(String path, FileInfo fileInfo) throws FilesystemException {
+	protected void open(Path path, FileInfo fileInfo) throws FilesystemException {
 		DirEntry entry = getDirEntry(path);
 		Inode inode = inodes.get(entry.inode);
 		FileHandle.open(fileInfo, inode);
 	}
 	
 	@Override
-	protected void create(String path, int mode, FileInfo fi) throws FilesystemException {
+	protected void create(Path path, int mode, FileInfo fi) throws FilesystemException {
 		Inode inode = makeNode(path, mode, 0);
 		FileHandle.open(fi, inode);
 	}
 	
 	@Override
-	protected void release(String path, FileInfo fi) throws FilesystemException {
+	protected void release(Path path, FileInfo fi) throws FilesystemException {
 		FileHandle.release(fi);
 	}
 	
 	@Override
-	protected void write(String path, FileInfo fi, ByteBuffer bb, long offset) throws FilesystemException {
+	protected void write(Path path, FileInfo fi, ByteBuffer bb, long offset) throws FilesystemException {
 		FileHandle fh = FileHandle.get(fi.getFileHandle());
 		Inode inode = fh.inode;
 		if (inode.data instanceof FileData) {
@@ -441,7 +436,7 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void utimens(String path, long accessSeconds, long accessNanoseconds, long modSeconds, long modNanoseconds) throws FilesystemException {
+	protected void utimens(Path path, long accessSeconds, long accessNanoseconds, long modSeconds, long modNanoseconds) throws FilesystemException {
 		DirEntry entry = getDirEntry(path);
 		Inode inode = inodes.get(entry.inode);
 		inode.mtime = modSeconds;
@@ -449,7 +444,7 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void truncate(String path, long size) throws FilesystemException {
+	protected void truncate(Path path, long size) throws FilesystemException {
 		DirEntry entry = getDirEntry(path);
 		Inode inode = inodes.get(entry.inode);
 		if (inode.data instanceof FileData) {
@@ -464,7 +459,7 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void ftruncate(String path, long size, FileInfo fi) throws FilesystemException {
+	protected void ftruncate(Path path, long size, FileInfo fi) throws FilesystemException {
 		FileHandle fh = FileHandle.get(fi.getFileHandle());
 		Inode inode = fh.inode;
 		if (inode.data instanceof FileData) {
@@ -479,14 +474,12 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void link(String from, String to) throws FilesystemException {
+	protected void link(Path from, Path to) throws FilesystemException {
 		DirEntry fromEntry = getDirEntry(from);
 		Inode fromInode = inodes.get(fromEntry.inode);
 		// first break path into parent and name
-		int slash = to.lastIndexOf('/');
-		String parent = to.substring(0, slash);
-		if (parent.length() == 0)
-			parent = "/";
+		
+		Path parent = parentOf(to);
 		// get the parent node
 		DirEntry parentEntry = getDirEntry(parent);
 		Inode parentNode = inodes.get(parentEntry.inode);
@@ -494,7 +487,7 @@ public class ExampleFs extends Filesystem {
 			throw new FilesystemException(Errno.NotADirectory);
 		Directory parentDir = (Directory)parentNode.data;
 		// see if file already exists
-		String name = to.substring(slash + 1);
+		Path name = to.getFileName();
 		DirEntry entry = parentDir.find(name);
 		if (entry != null)
 			throw new FilesystemException(Errno.FileExists);
@@ -503,12 +496,9 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void symlink(String targetOfLink, String pathOfLink) throws FilesystemException {
+	protected void symlink(Path targetOfLink, Path pathOfLink) throws FilesystemException {
 		// first break path into parent and name
-		int slash = pathOfLink.lastIndexOf('/');
-		String parent = pathOfLink.substring(0, slash);
-		if (parent.length() == 0)
-			parent = "/";
+		Path parent = parentOf(pathOfLink);
 		// get the parent node
 		DirEntry parentEntry = getDirEntry(parent);
 		Inode parentNode = inodes.get(parentEntry.inode);
@@ -516,7 +506,7 @@ public class ExampleFs extends Filesystem {
 			throw new FilesystemException(Errno.NotADirectory);
 		Directory parentDir = (Directory)parentNode.data;
 		// see if file already exists
-		String name = pathOfLink.substring(slash + 1);
+		Path name = pathOfLink.getFileName();
 		DirEntry entry = parentDir.find(name);
 		if (entry != null)
 			throw new FilesystemException(Errno.FileExists);
@@ -527,7 +517,7 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected String readlink(String path) throws FilesystemException {
+	protected Path readlink(Path path) throws FilesystemException {
 		DirEntry entry = getDirEntry(path);
 		Inode inode = inodes.get(entry.inode);
 		if (!(inode.data instanceof SymLink))
@@ -536,31 +526,24 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void rename(String from, String to) throws FilesystemException {
-		int slash;
-		String parent;
+	protected void rename(Path from, Path to) throws FilesystemException {
+		Path parent;
 		DirEntry parentEntry;
 		Inode parentInode;
 
 		// get the from directory
-		slash = from.lastIndexOf('/');
-		parent = from.substring(0, slash);
-		if (parent.length() == 0)
-			parent = "/";
+		parent = parentOf(from);
 		parentEntry = getDirEntry(parent);
 		parentInode = inodes.get(parentEntry.inode);
 		Directory fromParent = (Directory)parentInode.data;
-		String fromName = from.substring(slash + 1);
+		Path fromName = from.getFileName();
 		
 		// get the to directory
-		slash = to.lastIndexOf('/');
-		parent = to.substring(0, slash);
-		if (parent.length() == 0)
-			parent = "/";
+		parent = parentOf(to);
 		parentEntry = getDirEntry(parent);
 		parentInode = inodes.get(parentEntry.inode);
 		Directory toParent = (Directory)parentInode.data;
-		String toName = to.substring(slash + 1);
+		Path toName = to.getFileName();
 		
 		DirEntry entry = fromParent.find(fromName);
 		entry.name = toName;
@@ -569,11 +552,8 @@ public class ExampleFs extends Filesystem {
 			toParent.add(fromParent.remove(fromName));
 	}
 	
-	protected Inode makeNode(String path, int mode, long rdev) throws FilesystemException {
-		int slash = path.lastIndexOf('/');
-		String parent = path.substring(0, slash);
-		if (parent.length() == 0)
-			parent = "/";
+	protected Inode makeNode(Path path, int mode, long rdev) throws FilesystemException {
+		Path parent = parentOf(path);
 		// get the parent node
 		DirEntry parentEntry = getDirEntry(parent);
 		Inode parentNode = inodes.get(parentEntry.inode);
@@ -581,7 +561,7 @@ public class ExampleFs extends Filesystem {
 			throw new FilesystemException(Errno.NotADirectory);
 		Directory parentDir = (Directory)parentNode.data;
 		// see if file already exists
-		String name = path.substring(slash + 1);
+		Path name = path.getFileName();
 		DirEntry entry = parentDir.find(name);
 		if (entry != null)
 			throw new FilesystemException(Errno.FileExists);
@@ -592,27 +572,30 @@ public class ExampleFs extends Filesystem {
 		return inode;
 	}
 	
+	private Path parentOf(Path path) {
+		Path parent = path.getParent();
+		if (parent == null)
+			parent = rootPath;
+		return parent;
+	}
+	
 	@Override
-	protected void mknod(String path, int mode, long rdev) throws FilesystemException {
+	protected void mknod(Path path, int mode, long rdev) throws FilesystemException {
 		makeNode(path, mode, rdev);
 	}
 	
 	@Override
-	protected void unlink(String path) throws FilesystemException {
-		int slash;
-		String parent;
+	protected void unlink(Path path) throws FilesystemException {
+		Path parent;
 		DirEntry parentEntry;
 		Inode parentInode;
-		String name;
+		Path name;
 		
 		// get the from directory
-		slash = path.lastIndexOf('/');
-		parent = path.substring(0, slash);
-		if (parent.length() == 0)
-			parent = "/";
+		parent = parentOf(path);
 		parentEntry = getDirEntry(parent);
 		parentInode = inodes.get(parentEntry.inode);
-		name = path.substring(slash + 1);
+		name = path.getFileName();
 		if (!(parentInode.data instanceof Directory))
 			throw new FilesystemException(Errno.NotADirectory);
 		Directory parentDir = (Directory)parentInode.data;
@@ -625,7 +608,7 @@ public class ExampleFs extends Filesystem {
 	}
 	
 	@Override
-	protected void statfs(String path, StatVfs stat) throws FilesystemException {
+	protected void statfs(Path path, StatVfs stat) throws FilesystemException {
 		long blocksFree = Runtime.getRuntime().freeMemory() / FileData.BLOCKSIZE;
 		stat.putBlocks(blockCount.get());
 		stat.putBlocksAvail(blocksFree);
